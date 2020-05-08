@@ -11,7 +11,7 @@
 # Reference Material
 ><ol>
 >    <li><p>https://www.schankacademy.com/data-analytics-big-data</p></li>
->    <li><p>https://cenfotec.courses.dataanalyticsacademy.com/mc/program?productID=5545</p></li>
+>    <li><p>https://cenfotec.courses.dataanalyticsacademy.com</p></li>
 ></ol>
 
 # Module 1 - Understanding Customers and Predicting Profitability
