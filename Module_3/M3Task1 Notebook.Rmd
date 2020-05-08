@@ -1,0 +1,147 @@
+---
+title: "M3T1 - Exploratory Analysis"
+output: html_notebook
+---
+
+# Task Description
+
+Hi,
+
+I have exciting news. We’re about to close a deal with a regional home developer to develop analytics for a new set of electrical sub-metering devices used for power management in Smart Homes. Installing these sub-meters could be a big step towards the developer's goal of offering highly efficient Smart Homes that providing owners with power usage analytics.
+
+As a starting point, they have provided us with a very large data set that contains 47 months of energy usage data from these devices. Our job over the next few weeks will be to analyze this data to determine what kind of analytics and visualizations can be created that would empower Smart Home owners with greater understanding and control of their power usage.
+
+Since you are new at IOT Analytics, I’ll explain our onboarding process for new clients.
+
+Conduct research to become informed on the client’s business. In this case, you will need to get up to speed on the domains of Smart Homes, sub-meters and household power consumption.
+Identify any analytic skill/knowledge gaps foreseen for the project and plug those gaps with self-learning. With a data set this big, data munging and sub-setting will be essential to the analytic process. Working with DateTime and Time Series also needs to be mastered.
+Perform an initial exploration of the data. This exploration should be used to understand any potential issues, conduct early preprocessing, note summary statistics and identify any early recommendations about improvements to future data collection.
+Hold a project kick-off meeting with the client to close the deal. This meeting will center around a presentation that contains all of the project details and our initial exploration of the data.
+Your initial task is to work through the onboarding process and produce a PowerPoint presentation that will be delivered to the home developer’s management team during the kick off meeting. This report will give them confidence in our process and convince them that this project is relevant to their business needs.
+
+It is important to remember that we do not know what the data will show, and neither does the home builder; it is your job to tell them how we will conduct the analysis and what they are likely to gain, so be precise and accurate with your findings and any initial recommendations. However, keep in mind that you will be presenting your report to business rather than technical people.
+
+Well, the future of this project is in your capable hands! Gather the required resources and prove that the sub-metering devices will deliver the value the developer seeks through data analytics.
+
+Good luck,
+
+Kathy
+
+VP, IOT Analytics
+
+```{r}
+# Load Libraries
+library(readr)
+library(RMySQL)
+library(tidyverse)
+library(lubridate)
+library(plyr)
+library(dplyr)
+library(knitr)
+library(skimr)
+library(ggplot2)
+```
+
+# Connect the DB
+
+```{r}
+# DB Connection
+con = dbConnect(MySQL(), user='deepAnalytics', password='Sqltask1234!', dbname='dataanalytics2018', host='data-analytics-2018.cbrosir2cswx.us-east-1.rds.amazonaws.com')
+
+# Explore the DB
+dbListTables(con)
+```
+
+# Load Tables
+
+```{r}
+# Load Tables
+year_2006 <- dbGetQuery(con, "SELECT * FROM yr_2006")
+year_2007 <- dbGetQuery(con, "SELECT * FROM yr_2007")
+year_2008 <- dbGetQuery(con, "SELECT * FROM yr_2008")
+year_2009 <- dbGetQuery(con, "SELECT * FROM yr_2009")
+year_2010 <- dbGetQuery(con, "SELECT * FROM yr_2010")
+```
+
+# Investigate Data Types
+
+```{r}
+str(year_2006)
+str(year_2007)
+str(year_2008)
+str(year_2009)
+str(year_2010)
+```
+
+# Set Working Directory and Export CSV Files
+
+```{r}
+# Set WD
+setwd("~/R/XTOL/Module3/Task1/")
+
+# Export Tables into CSV files
+write.csv(year_2006, file = "2006.csv")
+write.csv(year_2007, file = "2007.csv")
+write.csv(year_2008, file = "2008.csv")
+write.csv(year_2009, file = "2009.csv")
+write.csv(year_2010, file = "2010.csv")
+```
+
+### Comments
+2006 contains only 1 month (December)
+2007, 2008 and 2009 contains 12 months each
+2010 contains 11 months (december is missing)
+
+# Combine Tables 
+```{r}
+# Combine Tables
+multi_year <- bind_rows(year_2007, year_2008, year_2009)
+
+# Add a column to summariz the submetering readings
+multi_year$TotalSub <- cbind(multi_year$Sub_metering_1, multi_year$Sub_metering_2, multi_year$Sub_metering_3)
+
+# Create a column named DateTime
+multi_year$DateTime <- paste(multi_year$Date, multi_year$Time)
+multi_year$DateTime <- ymd_hms(multi_year$DateTime)
+
+# Add Europe/Paris Time Zone
+attr(multi_year$DateTime, "tzone") <- "Europe/Paris"
+
+# Add Time hierarchy
+multi_year$hour <- hour(multi_year$DateTime)
+multi_year$year <- year(multi_year$DateTime)
+multi_year$quarter <- quarter(multi_year$DateTime)
+multi_year$month <- month(multi_year$DateTime, label = TRUE)
+multi_year$wday <- wday(multi_year$DateTime, label = TRUE)
+
+# EDA
+multi_year$kitchen_kwh <- multi_year$Sub_metering_1/1000
+multi_year$laundry_kwh <- multi_year$Sub_metering_2/1000
+multi_year$waterheat_aircond_kwh <- multi_year$Sub_metering_3/1000
+multi_year$Global_active_power_kwh <- multi_year$Global_active_power/60
+
+# delete old columns (sub 1, 2, 3)
+multi_year <- multi_year[,-which(names(multi_year) %in% c("Sub_metering_1","Sub_metering_2","Sub_metering_3"))] 
+
+# Create Column Other
+multi_year$Other_kwh <- multi_year$Global_active_power_kwh - multi_year$kitchen_kwh - multi_year$laundry_kwh - 
+  multi_year$waterheat_aircond_kwh
+
+
+# Export Combined Table
+write.csv(multi_year, file = "multi_year.csv")
+```
+
+# EDA
+
+```{r}
+str(multi_year)
+summary(multi_year)
+```
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.

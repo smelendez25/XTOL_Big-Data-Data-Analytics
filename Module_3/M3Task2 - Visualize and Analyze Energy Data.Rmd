@@ -1,0 +1,637 @@
+---
+title: "M3T2 - Visualize and Analyze Energy Data"
+output: 
+  html_notebook: 
+    number_sections: yes
+    theme: cosmo
+---
+
+# Task Description
+
+Hi,
+
+I have exciting news. We’re about to close a deal with a regional home developer to develop analytics for a new set of electrical sub-metering devices used for power management in Smart Homes. Installing these sub-meters could be a big step towards the developer's goal of offering highly efficient Smart Homes that providing owners with power usage analytics.
+
+As a starting point, they have provided us with a very large data set that contains 47 months of energy usage data from these devices. Our job over the next few weeks will be to analyze this data to determine what kind of analytics and visualizations can be created that would empower Smart Home owners with greater understanding and control of their power usage.
+
+Since you are new at IOT Analytics, I’ll explain our onboarding process for new clients.
+
+Conduct research to become informed on the client’s business. In this case, you will need to get up to speed on the domains of Smart Homes, sub-meters and household power consumption.
+Identify any analytic skill/knowledge gaps foreseen for the project and plug those gaps with self-learning. With a data set this big, data munging and sub-setting will be essential to the analytic process. Working with DateTime and Time Series also needs to be mastered.
+Perform an initial exploration of the data. This exploration should be used to understand any potential issues, conduct early preprocessing, note summary statistics and identify any early recommendations about improvements to future data collection.
+Hold a project kick-off meeting with the client to close the deal. This meeting will center around a presentation that contains all of the project details and our initial exploration of the data.
+Your initial task is to work through the onboarding process and produce a PowerPoint presentation that will be delivered to the home developer’s management team during the kick off meeting. This report will give them confidence in our process and convince them that this project is relevant to their business needs.
+
+It is important to remember that we do not know what the data will show, and neither does the home builder; it is your job to tell them how we will conduct the analysis and what they are likely to gain, so be precise and accurate with your findings and any initial recommendations. However, keep in mind that you will be presenting your report to business rather than technical people.
+
+Well, the future of this project is in your capable hands! Gather the required resources and prove that the sub-metering devices will deliver the value the developer seeks through data analytics.
+
+Good luck,
+
+Kathy
+
+VP, IOT Analytics
+
+```{r}
+# Load Libraries
+library(caret)     
+library(tidyverse) 
+library(readr)
+library(RMySQL)
+library(lubridate) 
+library(plyr)
+library(dplyr)
+library(knitr)
+library(skimr)
+library(ggplot2)
+library(plotly)
+library(tidyr)
+library(Hmisc)      
+library(forecast)  
+library(plotrix)
+library(kableExtra) 
+library(broom)     
+library(knitr)     
+library(VIM)       
+```
+
+# Data Set Feature Definitions
+
+```{r}
+# Create Definitions Table
+Energy_submeter_defs <- read.csv("~/XTOL Big Data/Module 3/Task 2 - Visualize and Analyze Energy Data/Energy_submeter_defs.csv")
+
+kable(Energy_submeter_defs, align = 'l', col.names=c('Feature', 'Definition', 'Sub-Meter-Coverage'), caption='Data Set Feature Definitions') %>% kable_styling('striped')
+```
+
+# Connect to Database
+
+```{r}
+# DB Connection
+con = dbConnect(MySQL(), user='deepAnalytics', password='Sqltask1234!', dbname='dataanalytics2018', host='data-analytics-2018.cbrosir2cswx.us-east-1.rds.amazonaws.com')
+
+# Explore the DB
+dbListTables(con)
+```
+
+# Load Tables
+
+```{r}
+# Load Tables
+year_2006 <- dbGetQuery(con, "SELECT * FROM yr_2006")
+year_2007 <- dbGetQuery(con, "SELECT * FROM yr_2007")
+year_2008 <- dbGetQuery(con, "SELECT * FROM yr_2008")
+year_2009 <- dbGetQuery(con, "SELECT * FROM yr_2009")
+year_2010 <- dbGetQuery(con, "SELECT * FROM yr_2010")
+```
+
+# Investigate Data Types
+
+```{r}
+str(year_2006)
+str(year_2007)
+str(year_2008)
+str(year_2009)
+str(year_2010)
+```
+
+## Comments
+2006 contains only 1 month (December)
+2007, 2008 and 2009 contains 12 months each
+2010 contains 11 months (december is missing)
+
+```{r}
+# Combine Tables
+multi_year <- bind_rows(year_2007, year_2008, year_2009)
+
+# Change Feature Names
+house_pwr <- multi_year
+```
+
+# Data Processing
+
+```{r}
+#-change feature names
+colnames(house_pwr)[4] <- 'Glbl_actvPwr'
+colnames(house_pwr)[5] <- 'Glbl_ractvPwr'
+colnames(house_pwr)[8] <- 'Sub-Meter-1'
+colnames(house_pwr)[9] <- 'Sub-Meter-2'
+colnames(house_pwr)[10] <- 'Sub-Meter-3'
+
+# Create a column named DateTime
+house_pwr$DateTime <- paste(house_pwr$Date, house_pwr$Time)
+house_pwr$DateTime <- ymd_hms(house_pwr$DateTime)
+
+# Add Europe/Paris Time Zone
+attr(house_pwr$DateTime, "tzone") <- "Europe/Paris"
+
+# Check Range
+range(house_pwr$DateTime)
+
+# remove data from year 2010
+house_pwr <- filter(house_pwr, year(DateTime) != 2010)
+
+# Check NAs
+sum(is.na(house_pwr))
+
+# Create Long Form of Data Set
+house_pwr_tidy <- house_pwr %>% gather(Meter, Watt_hr, `Sub-Meter-1`, `Sub-Meter-2`, `Sub-Meter-3`)
+
+#-Convert meter feature to categorical
+house_pwr_tidy$Meter <- factor(house_pwr_tidy$Meter)
+  
+#-peak at data 
+glimpse(house_pwr_tidy)
+```
+
+# Visualizations of Energy Usage Across Sub-Meters and Time Periods
+## Yearly Time Period
+
+```{r}
+#-Year_Proportional Plot
+house_pwr_tidy %>%
+  group_by(year(DateTime), Meter) %>%
+  summarise(sum=sum(Watt_hr)) %>%
+  ggplot(aes(x=factor(`year(DateTime)`), sum, group=Meter,fill=Meter)) +
+  labs(x='Year', y='Proportion of Energy Usage') +
+  ggtitle('Proportion of Total Yearly Energy Consumption') +
+  geom_bar(stat='identity', position='fill', color='black') +
+  theme(panel.border=element_rect(colour='black', fill=NA)) +
+  theme(text = element_text(size = 14))
+```
+
+## Quaterly Time Period
+
+```{r}
+#-Quarterly bar plot
+house_pwr_tidy %>%
+  filter(year(DateTime)<2010) %>%
+  group_by(quarter(DateTime), Meter) %>%
+  summarise(sum=round(sum(Watt_hr/1000),3)) %>%
+  ggplot(aes(x=factor(`quarter(DateTime)`), y=sum)) +
+  labs(x='Quarter of the Year', y='kWh') +
+  ggtitle('Total Quarterly Energy Consumption') +
+  geom_bar(stat='identity', aes(fill = Meter), color='black') +
+  theme(panel.border=element_rect(colour='black', fill=NA)) +
+  theme(text = element_text(size = 14))
+```
+
+## Monthly Time Period
+
+```{r}
+#-Monthly bar chart
+house_pwr_tidy %>%
+  filter(year(DateTime)<2010) %>%
+  mutate(Month=lubridate::month(DateTime, label=TRUE, abbr=TRUE)) %>%
+  group_by(Month, Meter) %>%
+  summarise(sum=round(sum(Watt_hr)/1000),3) %>%
+  ggplot(aes(x=factor(Month), y=sum)) +
+    labs(x='Month of the Year', y='kWh') +
+    ggtitle('Total Energy Usage by Month of the Year') +
+    geom_bar(stat='identity', aes(fill = Meter), colour='black') +
+  theme(panel.border=element_rect(colour='black', fill=NA)) +
+  theme(text = element_text(size = 14))
+```
+
+## Weekly Time Period
+
+```{r}
+#-Week of the year- bar plot
+house_pwr_tidy %>%
+  group_by(week(DateTime), Meter) %>%
+  summarise(sum=sum(Watt_hr/1000)) %>%
+  ggplot(aes(x=factor(`week(DateTime)`), y=sum)) +
+    labs(x='Week of the Year', y='kWh') +
+    ggtitle('Total Energy Usage by Week of the Year') +
+    theme(axis.text.x = element_text(angle=90)) +
+    geom_bar(stat='identity', aes(fill=Meter), colour='black') +
+  theme(panel.border=element_rect(colour='black', fill=NA)) +
+  theme(text = element_text(size = 14))
+```
+
+## Hourly Time Period
+
+```{r}
+#-Hour of day bar chart
+house_pwr_tidy %>%
+  filter(month(DateTime) == c(1,2,11,12)) %>%
+  group_by(hour(DateTime), Meter) %>%
+  summarise(sum=round(sum(Watt_hr)/1000),3) %>%
+  ggplot(aes(x=factor(`hour(DateTime)`), y=sum)) +
+  labs(x='Hour of the Day', y='kWh') +
+  ggtitle('Total Energy Usage by Hour of the Day') +
+  geom_bar(stat='identity', aes(fill = Meter), colour='black') +
+  theme(panel.border=element_rect(colour='black', fill=NA)) +
+  theme(text = element_text(size = 14))
+```
+
+# Compare Energy Consumption for Day of Week (Summer & Winter)
+
+## Winter
+
+```{r}
+#-Filter and plot data for weeks 1-8
+house_pwr_tidy %>%
+  filter(week(DateTime) == c(1:8)) %>%
+  mutate(Day=lubridate::wday(DateTime, label=TRUE, abbr=TRUE)) %>%
+  group_by(Day, Meter) %>%
+  summarise(sum=sum(Watt_hr/1000)) %>%
+  ggplot(aes(x=factor(Day), y=sum)) +
+  labs(x='Day of the Week', y='kWh') +
+  ylim(0,85) +
+  ggtitle('Total Energy Usage by Day for Weeks of \nHigh Consumption in Winter Months') +
+  geom_bar(stat='identity', aes(fill = Meter), colour='black') +
+  theme(panel.border=element_rect(colour='black', fill=NA)) +
+  theme(text = element_text(size = 14))
+```
+
+## Summer
+
+```{r}
+#-Filter and plot data for weeks 18-25
+house_pwr_tidy %>%
+  filter(week(DateTime) == c(18:25)) %>%
+  mutate(Day=lubridate::wday(DateTime, label=TRUE, abbr=TRUE)) %>%
+  group_by(Day, Meter) %>%
+  summarise(sum=sum(Watt_hr/1000)) %>%
+  ggplot(aes(x=factor(Day), y=sum)) +
+  labs(x='Day of the Week', y='kWh') +
+  ylim(0,85) +
+  ggtitle('Total Energy Usage by Day for Weeks of \nHigh Consumptionin Summer Months') +
+  geom_bar(stat='identity', aes(fill = Meter), colour='black') +
+  theme(panel.border=element_rect(colour='black', fill=NA)) +
+  theme(text = element_text(size = 14))
+```
+
+## Summary Plot
+
+```{r}
+#-Subset data for weeks 1-8 and assign to variable w
+w <- house_pwr_tidy %>%
+  filter(week(DateTime) == c(1:8)) %>%
+  filter(Meter == 'Sub-Meter-3') %>% 
+  mutate(Day=lubridate::wday(DateTime, label=TRUE, abbr=TRUE)) %>%
+  group_by(Day, Meter) %>%
+  summarise(sum=sum(Watt_hr/1000))
+
+
+#-Subset data for weeks 18-25 and assign to variable ww
+ww <- house_pwr_tidy %>%
+  filter(week(DateTime) == c(18:25)) %>%
+  filter(Meter == 'Sub-Meter-3') %>% 
+  mutate(Day=lubridate::wday(DateTime, label=TRUE, abbr=TRUE)) %>%
+  group_by(Day, Meter) %>%
+  summarise(sum=sum(Watt_hr/1000))
+
+#-Overlay line plots of the two 8-week time periods
+ggplot(w) +
+  labs(x='Day of the Week', y='kWh') +
+  ylim(0,65) +
+  ggtitle(' Energy Usage on Submeter 3 for Winter and Summer') +
+  geom_line(aes(x=Day, y=sum, group=1,colour='winter')) +
+  geom_line(data = ww, aes(x=Day, y=sum, group=1, color='summer')) +
+  scale_colour_manual(values=c('winter'='blue', 'summer'='red')) +
+  labs(colour='Season') +
+  guides(colour=guide_legend(reverse=TRUE)) +
+  theme(panel.border=element_rect(colour='black', fill=NA))+
+  theme(text = element_text(size = 14))
+
+```
+
+# Subset Data Set by Time Periods of Year, Quarters and Months
+
+```{r}
+#-Subset data by year and summarise total usage across the 3 submeters
+housePWR_year <- house_pwr %>%
+  group_by(year(DateTime)) %>%
+  summarise(Sub_Meter_1=round(sum(`Sub-Meter-1`/1000), 3),
+            Sub_Meter_2=round(sum(`Sub-Meter-2`/1000), 3),
+            Sub_Meter_3=round(sum(`Sub-Meter-3`/1000), 3))
+  
+#-Look at top several rows of new yearly data set 
+head(housePWR_year)
+
+#-Subset data by quarter and summarise total usage across the 3 submeters
+housePWR_qtr <- house_pwr %>%
+  group_by(year(DateTime), quarter(DateTime)) %>%
+  summarise(Sub_Meter_1=round(sum(`Sub-Meter-1`/1000), 3),
+            Sub_Meter_2=round(sum(`Sub-Meter-2`/1000), 3),
+            Sub_Meter_3=round(sum(`Sub-Meter-3`/1000), 3))
+  
+#-Look at top several rows of new quarterly data set 
+head(housePWR_qtr)
+
+#-Subset data by month and summarise total energy usage across submeters
+housePWR_mnth <- house_pwr %>%
+  group_by(year(DateTime), month(DateTime)) %>%
+  summarise(Sub_Meter_1=round(sum(`Sub-Meter-1`/1000), 3),
+            Sub_Meter_2=round(sum(`Sub-Meter-2`/1000), 3),
+            Sub_Meter_3=round(sum(`Sub-Meter-3`/1000), 3))
+  
+#-Look at top several rows of new monthly data set
+head(housePWR_mnth)
+
+```
+
+# Convert to Time Series and Plot
+
+## Monthly Time Series
+
+```{r}
+#-Create monthly time series
+housePWR_mnthTS <- ts(housePWR_mnth[,3:5],
+                      frequency = 12,
+                      start=c(2007,1),
+                      end=c(2009,12))
+  
+#-Plot monthly time series
+plot(housePWR_mnthTS, 
+     plot.type='s',
+     xlim=c(2007, 2010),
+     col=c('red', 'green', 'blue'),
+     main='Total Monthly kWh Consumption',
+     xlab='Year/Month', ylab = 'kWh')
+minor.tick(nx=12)
+
+#-Create legend
+b <- c('Sub-meter-1', 'Sub-meter-2', 'Sub-meter-3')
+legend('topleft', b, col=c('red', 'green', 'blue'), lwd=2, bty='n')
+
+```
+## Fit Linear Regression Model to Monthly Time Series for Sub Meters 1, 2 and 3
+
+```{r}
+# Sub Meter 1
+#-Fit linear model to montly time series for submeter 1
+fitmonth1 <- tslm(housePWR_mnthTS[,1] ~ trend + season)
+
+#-One-row statistical summary of monthly linear model
+glance(fitmonth1)
+
+# Summary analysis of residuals
+checkresiduals(fitmonth1)
+
+# Sub Meter 2
+#-Fit linear model to montly time series for submeter 2
+fitmonth2 <- tslm(housePWR_mnthTS[,2] ~ trend + season)
+ 
+#-One-row statistical summary of monthly linear model
+glance(fitmonth2)
+
+# Summary analysis of residuals
+checkresiduals(fitmonth2)
+
+# Sub Meter 3
+#-Fit linear model to montly time series for submeter 3
+fitmonth3 <- tslm(housePWR_mnthTS[,3] ~ trend + season)
+  
+#-One-row statistical summary of monthly linear model
+glance(fitmonth3)
+
+# Summary analysis of residuals
+checkresiduals(fitmonth3)
+```
+
+# Forecast of Energy Consumption
+
+With the above analysis supporting the legitimacy of our linear models, we can feel more confident using it to make predictions for quarterly and monthly energy consumption on submeters 1, 2 and 3
+
+## Monthly Forecast
+
+```{r}
+# Sub Meter 1
+#-Forecast 12-months of energy usage
+y1 <- forecast(fitmonth1,h=12, level=c(80,95))
+
+#-Plot 12-months forecast of energy usage
+plot(y1, showgap=FALSE, include=4,
+  shadecols=c('slategray3','slategray'),
+  xlab ='Year',
+  ylab=' kWh',
+  main='12-Month Forecast of Monthly Energy Consumption Sub Meter 1')
+minor.tick(nx=6)
+
+# Sub Meter 2
+#-Forecast 12-months of energy usage
+y2 <- forecast(fitmonth2,h=12, level=c(80,95))
+  
+#-Plot 12-months forecast of energy usage
+plot(y2, showgap=FALSE, include=4,
+  shadecols=c('slategray3','slategray'),
+  xlab ='Year',
+  ylab=' kWh',
+  main='12-Month Forecast of Monthly Energy Consumption Sub Meter 2')
+minor.tick(nx=6)
+
+# Sub Meter 3
+#-Forecast 12-months of energy usage
+y3 <- forecast(fitmonth3,h=12, level=c(80,95))
+  
+#-Plot 12-months forecast of energy usage
+plot(y3, showgap=FALSE, include=4,
+  shadecols=c('slategray3','slategray'),
+  xlab ='Year',
+  ylab=' kWh',
+  main='12-Month Forecast of Monthly Energy Consumption Sub Meter 3')
+minor.tick(nx=6)
+
+# RMSE and R2 Values
+#Sub Meter 1
+summary(fitmonth1)
+
+#Sub Meter 2
+summary(fitmonth2)
+
+#Sub Meter 3
+summary(fitmonth3)
+
+#-Summary of 12-month forecast
+summary(y1)
+summary(y2)
+summary(y3)
+```
+
+# Decomposing a Seasonal Time Series
+
+```{r}
+# Decompose Sub Meter 1
+#-Create monthly time series for Submeter1
+housePWR_mnthTS1 <- ts(housePWR_mnth[,3],
+                      frequency = 12,
+                      start=c(2007,1),
+                      end=c(2009,12))
+
+## Decompose Sub-meter 1 into trend, seasonal and remainder
+components_mnthTS1 <- decompose(housePWR_mnthTS1, "multiplicative")
+
+## Plot decomposed all sub-meters 
+plot(components_mnthTS1)
+
+## Check summary statistics for decomposed sub-meter 3 
+summary(components_mnthTS1)
+
+# Decompose Sub Meter 2
+#-Create monthly time series for Submeter1
+housePWR_mnthTS2 <- ts(housePWR_mnth[,4],
+                      frequency = 12,
+                      start=c(2007,1),
+                      end=c(2009,12))
+
+## Decompose Sub-meter 2 into trend, seasonal and remainder
+components_mnthTS2 <- decompose(housePWR_mnthTS2, "multiplicative")
+
+## Plot decomposed all sub-meters 
+plot(components_mnthTS2)
+
+## Check summary statistics for decomposed sub-meter 3 
+summary(components_mnthTS2)
+
+# Decompose Sub Meter 3
+#-Create monthly time series for Submeter1
+housePWR_mnthTS3 <- ts(housePWR_mnth[,5],
+                      frequency = 12,
+                      start=c(2007,1),
+                      end=c(2009,12))
+
+## Decompose Sub-meter 3 into trend, seasonal and remainder
+components_mnthTS3 <- decompose(housePWR_mnthTS3, "multiplicative")
+
+## Plot decomposed all sub-meters 
+plot(components_mnthTS3)
+
+## Check summary statistics for decomposed sub-meter 3 
+summary(components_mnthTS3)
+
+```
+
+# Holt Winters Forecasting
+
+```{r}
+#Remove Seasonal Components
+# Sub Meter 1
+## Seasonal adjusting sub-meter 1 by subtracting the seasonal component & plot
+tsSM1_Adjusted1 <- housePWR_mnthTS1 - components_mnthTS1$seasonal
+
+#-Plot Sub Meter 1
+plot(tsSM1_Adjusted1, 
+     plot.type='s',
+     xlim=c(2007, 2010),
+     col=c('red'),
+     main='Total Monthly kWh Consumption - Adjusted for Sub Meter 1',
+     xlab='Year/Month', ylab = 'kWh')
+minor.tick(nx=1)
+
+# Sub Meter 2
+## Seasonal adjusting sub-meter 2 by subtracting the seasonal component & plot
+tsSM1_Adjusted2 <- housePWR_mnthTS2 - components_mnthTS2$seasonal
+
+#-Plot Sub Meter 2
+plot(tsSM1_Adjusted2, 
+     plot.type='s',
+     xlim=c(2007, 2010),
+     col=c('green'),
+     main='Total Monthly kWh Consumption - Adjusted  for Sub Meter 2',
+     xlab='Year/Month', ylab = 'kWh')
+minor.tick(nx=1)
+
+# Sub Meter 3
+## Seasonal adjusting sub-meter 3 by subtracting the seasonal component & plot
+tsSM1_Adjusted3 <- housePWR_mnthTS3 - components_mnthTS3$seasonal
+
+#-Plot Sub Meter 3
+plot(tsSM1_Adjusted3, 
+     plot.type='s',
+     xlim=c(2007, 2010),
+     col=c('blue'),
+     main='Total Monthly kWh Consumption - Adjusted for Sub Meter 3',
+     xlab='Year/Month', ylab = 'kWh')
+minor.tick(nx=1)
+
+## Test Seasonal Adjustment by running Decompose again. Note the very, very small scale for Seasonal
+plot(decompose(tsSM1_Adjusted1, "additive"))
+plot(decompose(tsSM1_Adjusted2, "additive"))
+plot(decompose(tsSM1_Adjusted3, "additive"))
+```
+
+# HoltWinters Simple Exponential Smoothing
+
+```{r}
+## Holt Winters Exponential Smoothing & Plot - Sub Meter 1
+tsSM_HW1 <- HoltWinters(tsSM1_Adjusted1, beta=FALSE, gamma=FALSE)
+
+plot(tsSM_HW1, 
+     plot.type='s',
+     xlim=c(2007, 2010),
+     col=c('green'),
+     main='Holt-Winters Filtering Sub Meter 1',
+     xlab='Year/Month', ylab = 'Observed / Fitted')
+minor.tick(nx=1)
+
+## Holt Winters Exponential Smoothing & Plot - Sub Meter 2
+tsSM_HW2 <- HoltWinters(tsSM1_Adjusted2, beta=FALSE, gamma=FALSE)
+
+plot(tsSM_HW2, 
+     plot.type='s',
+     xlim=c(2007, 2010),
+     col=c('green'),
+     main='Holt-Winters Filtering Sub Meter 2',
+     xlab='Year/Month', ylab = 'Observed / Fitted')
+minor.tick(nx=1)
+
+## Holt Winters Exponential Smoothing & Plot - Sub Meter 3
+tsSM_HW3 <- HoltWinters(tsSM1_Adjusted3, beta=FALSE, gamma=FALSE)
+
+plot(tsSM_HW3, 
+     plot.type='s',
+     xlim=c(2007, 2010),
+     col=c('green'),
+     main='Holt-Winters Filtering Sub Meter 3',
+     xlab='Year/Month', ylab = 'Observed / Fitted')
+minor.tick(nx=1)
+```
+
+# HoltWinters Forecast
+
+```{r}
+# Sub Meter 1
+#-Forecast 12 months of energy usage
+tsSM_HW1_forecast <- forecast(tsSM_HW1,h=12, level=c(80,95))
+
+#-Plot 12-months forecast of energy usage
+plot(tsSM_HW1_forecast, showgap=FALSE, include=4,
+  shadecols=c('slategray3','slategray'),
+  xlab ='Time - Sub-meter 1',
+  ylab=' kWh',
+  main='12 Month Forecast of Monthly Energy Consumption Sub Meter 1')
+minor.tick(nx=6)
+
+# Sub Meter 2
+#-Forecast 12-months of energy usage
+tsSM_HW2_forecast <- forecast(tsSM_HW2,h=12, level=c(80,95))
+
+#-Plot 25-months forecast of energy usage
+plot(tsSM_HW2_forecast, showgap=FALSE, include=4,
+  shadecols=c('slategray3','slategray'),
+  xlab ='Time - Sub-meter 1',
+  ylab=' kWh',
+  main='12 Month Forecast of Monthly Energy Consumption Sub Meter 2')
+minor.tick(nx=6)
+
+# Sub Meter 3
+#-Forecast 12-months of energy usage
+tsSM_HW3_forecast <- forecast(tsSM_HW3,h=12, level=c(80,95))
+
+#-Plot 12-months forecast of energy usage
+plot(tsSM_HW3_forecast, showgap=FALSE, include=4,
+  shadecols=c('slategray3','slategray'),
+  xlab ='Time - Sub-meter 1',
+  ylab=' kWh',
+  main='12 Month Forecast of Monthly Energy Consumption Sub Meter 3')
+minor.tick(nx=6)
+
+summary(tsSM_HW1_forecast)
+summary(tsSM_HW2_forecast)
+summary(tsSM_HW3_forecast)
+
+```
+

@@ -1,0 +1,718 @@
+---
+title: "M3T3 - Evaluate Techniques for Wifi Locationing"
+output: 
+  html_notebook: 
+    number_sections: yes
+    theme: paper
+---
+
+Wi-Fi positioning system (WPS), is used when GPS can’t receive the signal. To improve the user experience, it exist the Wi-Fi Fingerprinting. That system consist of estimating the position of a user using a smartphone that sends a signal (the fingerprint or instance) that is recived by a Wireless Access Points (WAPs).  Two files "trainingData.csv" and "validationData.csv" will be used to solve this problem.
+
+# Enviroment Setup
+## Load Packages
+```{r, echo=FALSE}
+#-Load packages
+library(dplyr)
+library(ISLR)
+library(lattice)
+library(ggplot2)
+library(caret)
+library(ggmap)
+library(caTools)
+library(gridExtra)
+library(ranger)
+library(e1071)
+library(readr)
+library(tidyverse)  
+library(kknn)        
+library(kernlab)     
+library(rgl)        
+library(scatterplot3d) 
+library(scales)     
+library(ranger)     
+library(C50)        
+library(broom)       
+library(kableExtra)  
+library(knitr)
+```
+## Load Data
+
+```{r}
+#-Training Data
+train <- read.csv("~/R/XTOL/Module3/Task3/trainingData.csv")
+valid <- read.csv("~/R/XTOL/Module3/Task3/validationData.csv")
+dim(train)
+dim(valid)
+
+# Attribute Definitions
+wifi_defTable <- read.csv("~/R/XTOL/Module3/Task3/definition_table.csv")
+  
+#-Generate table of variable definitions
+kable(wifi_defTable, caption = 'Attribute Definitions') %>%   kable_styling(bootstrap_options = c('striped', 'hover', 'responsive', 'bordered'), 
+                full_width = F, 
+                font_size = 14)
+```
+
+## Data Exploration
+
+```{r}
+summary(train[,510:529])
+summary(valid[,510:529])
+
+# Plot location with both data sets
+plot(train$LONGITUDE, train$LATITUDE)
+plot(valid$LONGITUDE, valid$LATITUDE)
+
+#3D image of reference point locations in data set
+scatterplot3d(train$LONGITUDE, train$LATITUDE, train$FLOOR,
+              type='p',
+              highlight.3d = FALSE,
+              color='blue',
+              angle=155,
+              pch=16,
+              box=FALSE,
+              main = "Location Reference Points Across Three Buildings of UJIIndoorLoc Data Set",
+              cex.lab = 1,
+              cex.main=1,
+              cex.sub=1,
+              col.sub='blue',
+              xlab='Longitude', ylab='Latitude',zlab = 'Building Floor') 
+
+```
+
+# Pre-processing
+
+```{r}
+#Merge both data. Divide full data
+set.seed(100)
+data <- rbind(train, valid)
+sample <- sample.split(data, SplitRatio = .70)
+training <- subset(data, sample ==TRUE)
+validation <- subset(data, sample == FALSE)
+```
+
+## Separate data by building
+
+```{r}
+#Separate data by building in train & valid
+build.0 <- filter(training, BUILDINGID == 0)
+build.1 <- filter(training, BUILDINGID == 1)
+build.2 <- filter(training, BUILDINGID == 2)
+
+build.0.v <- filter(validation, BUILDINGID == 0)
+build.1.v <- filter(validation, BUILDINGID == 1)
+build.2.v <- filter(validation, BUILDINGID == 2)
+
+#Create a data frame for each feature
+#TRAIN
+#Build 0
+build.0.lat <- data.frame(build.0$LATITUDE, build.0[,1:520])
+build.0.long <- data.frame(build.0$LONGITUDE, build.0[,1:520])
+build.0.floor <- data.frame(build.0$FLOOR, build.0[,1:520])
+
+#Build 1
+build.1.lat <- data.frame(build.1$LATITUDE, build.1[,1:520])
+build.1.long <- data.frame(build.1$LONGITUDE, build.1[,1:520])
+build.1.floor <- data.frame(build.1$FLOOR, build.1[,1:520])
+
+#Build 2
+build.2.lat <- data.frame(build.2$LATITUDE, build.2[,1:520])
+build.2.long <- data.frame(build.2$LONGITUDE, build.2[,1:520])
+build.2.floor <- data.frame(build.2$FLOOR, build.2[,1:520])
+
+#VALID
+#Build 0
+build.0.lat.v <- data.frame(build.0.v$LATITUDE, build.0.v[,1:520])
+build.0.long.v <- data.frame(build.0.v$LONGITUDE, build.0.v[,1:520])
+build.0.floor.v <- data.frame(build.0.v$FLOOR, build.0.v[,1:520])
+
+#Build 1
+build.1.lat.v <- data.frame(build.1.v$LATITUDE, build.1.v[,1:520])
+build.1.long.v <- data.frame(build.1.v$LONGITUDE, build.1.v[,1:520])
+build.1.floor.v <- data.frame(build.1.v$FLOOR, build.1.v[,1:520])
+
+#Build 2
+build.2.lat.v <- data.frame(build.2.v$LATITUDE, build.2.v[,1:520])
+build.2.long.v <- data.frame(build.2.v$LONGITUDE, build.2.v[,1:520])
+build.2.floor.v <- data.frame(build.2.v$FLOOR, build.2.v[,1:520])
+```
+
+## Data Sampling
+
+```{r}
+#Sample the data taking X random values
+#TRAIN
+#Build 0
+sample.build.0.lat <- build.0.lat[sample(1:nrow(build.0.lat), 4000, replace = FALSE),]
+sample.build.0.long <- build.0.long[sample(1:nrow(build.0.long), 4000, replace = FALSE),]
+sample.build.0.floor <- build.0.floor[sample(1:nrow(build.0.floor), 4000, replace = FALSE),]
+#Build 1
+sample.build.1.lat <- build.1.lat[sample(1:nrow(build.1.lat), 3000, replace = FALSE),]
+sample.build.1.long <- build.1.long[sample(1:nrow(build.1.long), 3000, replace = FALSE),]
+sample.build.1.floor <- build.1.floor[sample(1:nrow(build.1.floor), 3000, replace = FALSE),]
+#Build 2
+sample.build.2.lat <- build.2.lat[sample(1:nrow(build.2.lat), 6000, replace = FALSE),]
+sample.build.2.long <- build.2.long[sample(1:nrow(build.2.long), 6000, replace = FALSE),]
+sample.build.2.floor <- build.2.floor[sample(1:nrow(build.2.floor), 6000, replace = FALSE),]
+
+#Convert FLOOR fetaure in factor
+sample.build.0.floor$build.0.FLOOR <- as.factor(sample.build.0.floor$build.0.FLOOR)
+sample.build.1.floor$build.1.FLOOR <- as.factor(sample.build.1.floor$build.1.FLOOR)
+sample.build.2.floor$build.2.FLOOR <- as.factor(sample.build.2.floor$build.2.FLOOR)
+```
+
+# Fiting Models
+
+## KNN
+### Building 0
+
+```{r}
+### Building 0 ###
+
+# Train Control
+trctrlKNN <- trainControl(method = "cv", number = 5, verboseIter = TRUE)
+preProcessKNN <- c("zv", "medianImpute")
+
+### Model Training ###
+# Latitud #
+knn.lat.0 <- train(build.0.LATITUDE ~ ., sample.build.0.lat, method = "knn", trControl = trctrlKNN, preProcess = preProcessKNN)
+
+# Longitud #
+knn.long.0 <- train(build.0.LONGITUDE ~ ., sample.build.0.long, method = "knn", trControl = trctrlKNN, preProcess = preProcessKNN)
+
+# Floor #
+knn.floor.0 <- train(build.0.FLOOR ~ ., sample.build.0.floor, method = "knn", trControl = trctrlKNN , preProcess = preProcessKNN)
+
+### Prediction ###
+# Latitud #
+pred.knn.lat.0 <- predict(knn.lat.0, build.0.lat.v)
+
+# Longitud #
+pred.knn.long.0 <- predict(knn.long.0, build.0.long.v)
+
+# Floor #
+pred.knn.floor.0 <- predict(knn.floor.0, build.0.floor.v)
+
+# Post Resample #
+# Latitud #
+PRKNNb0lat0 <- postResample(pred.knn.lat.0, build.0.lat.v$build.0.v.LATITUDE)
+PRKNNb0lat0
+
+# Longitud #
+PRKNNb0lon0 <- postResample(pred.knn.long.0, build.0.long.v$build.0.v.LONGITUDE)
+PRKNNb0lon0
+
+# Accuracy #
+conf.matrix.knn.floor.0 <- table(pred.knn.floor.0, build.0.floor.v$build.0.v.FLOOR)
+accuracy.knn.floor.0 <- (sum(diag(conf.matrix.knn.floor.0))) / sum(conf.matrix.knn.floor.0)
+accuracy.knn.floor.0 <- accuracy.knn.floor.0 * 100
+accuracy.knn.floor.0
+
+```
+
+### Building 1
+
+```{r}
+### Building 1 ###
+### Model Training ###
+# Latitud #
+knn.lat.1 <- train(build.1.LATITUDE ~ ., sample.build.1.lat, method = "knn", trControl = trctrlKNN, preProcess = preProcessKNN)
+
+# Longitud #
+knn.long.1 <- train(build.1.LONGITUDE ~ ., sample.build.1.long, method = "knn", trControl = trctrlKNN, preProcess = preProcessKNN)
+
+# Floor #
+knn.floor.1 <- train(build.1.FLOOR ~ ., sample.build.1.floor, method = "knn", trControl = trctrlKNN , preProcess = preProcessKNN)
+
+### Prediction ###
+# Latitud #
+pred.knn.lat.1 <- predict(knn.lat.1, build.1.lat.v)
+
+# Longitud #
+pred.knn.long.1 <- predict(knn.long.1, build.1.long.v)
+
+# Floor #
+pred.knn.floor.1 <- predict(knn.floor.1, build.1.floor.v)
+
+# Post Resample #
+# Latitud #
+PRKNNb0lat1 <- postResample(pred.knn.lat.1, build.1.lat.v$build.1.v.LATITUDE)
+PRKNNb0lat1
+
+# Longitud #
+PRKNNb0lon1 <- postResample(pred.knn.long.1, build.1.long.v$build.1.v.LONGITUDE)
+PRKNNb0lon1
+
+# Accuracy #
+conf.matrix.knn.floor.1 <- table(pred.knn.floor.1, build.1.floor.v$build.1.v.FLOOR)
+accuracy.knn.floor.1 <- (sum(diag(conf.matrix.knn.floor.1))) / sum(conf.matrix.knn.floor.1)
+accuracy.knn.floor.1 <- accuracy.knn.floor.1 * 100
+accuracy.knn.floor.1
+```
+
+### Building 2
+
+```{r}
+### Building 2 ###
+### Model Training ###
+# Latitud #
+knn.lat.2 <- train(build.2.LATITUDE ~ ., sample.build.2.lat, method = "knn", trControl = trctrlKNN, preProcess = preProcessKNN)
+
+# Longitud #
+knn.long.2 <- train(build.2.LONGITUDE ~ ., sample.build.2.long, method = "knn", trControl = trctrlKNN, preProcess = preProcessKNN)
+
+# Floor #
+knn.floor.2 <- train(build.2.FLOOR ~ ., sample.build.2.floor, method = "knn", trControl = trctrlKNN , preProcess = preProcessKNN)
+
+### Prediction ###
+# Latitud #
+pred.knn.lat.2 <- predict(knn.lat.2, build.2.lat.v)
+
+# Longitud #
+pred.knn.long.2 <- predict(knn.long.2, build.2.long.v)
+
+# Floor #
+pred.knn.floor.2 <- predict(knn.floor.2, build.2.floor.v)
+
+### Post Resample ###
+# Latitud #
+PRKNNb0lat2 <- postResample(pred.knn.lat.2, build.2.lat.v$build.2.v.LATITUDE)
+PRKNNb0lat2
+
+# Longitud #
+PRKNNb0lon2 <- postResample(pred.knn.long.2, build.2.long.v$build.2.v.LONGITUDE)
+PRKNNb0lon2
+
+# Accuracy #
+conf.matrix.knn.floor.2 <- table(pred.knn.floor.2, build.2.floor.v$build.2.v.FLOOR)
+accuracy.knn.floor.2 <- (sum(diag(conf.matrix.knn.floor.2))) / sum(conf.matrix.knn.floor.2)
+accuracy.knn.floor.2 <- accuracy.knn.floor.2 * 100
+accuracy.knn.floor.2
+```
+
+### Save KNN Models
+
+```{r}
+# Building 0
+saveKNN.lat.0 <- saveRDS(knn.lat.0, 'modelknn.lat.0.rds')
+saveKNN.long.0 <- saveRDS(knn.long.0, 'modelknn.long.0.rds')
+saveKNN.floor.0 <- saveRDS(knn.floor.0, 'modelknn.floor.0.rds')
+
+# Building 1
+saveKNN.lat.1 <- saveRDS(knn.lat.1, 'modelGknn.lat.1.rds')
+saveKNN.long.1 <- saveRDS(knn.long.1, 'modelknn.long.1.rds')
+saveKNN.floor.1 <- saveRDS(knn.floor.1, 'modelknn.floor.1.rds')
+
+# Building 2
+saveKNN.lat.2 <- saveRDS(knn.lat.2, 'modelknn.lat.2.rds')
+saveKNN.long.2 <- saveRDS(knn.long.2, 'modelknn.long.2.rds')
+saveKNN.floor.2 <- saveRDS(knn.floor.2, 'modelknn.floor.2.rds')
+```
+
+## Random Forest 
+### Building 0
+
+```{r}
+# Train Control
+trctrlRF <- trainControl(method = "cv", number = 5, verboseIter = TRUE)
+preProcessRF <- c("zv", "medianImpute")
+tunegridRF <- expand.grid(mtry=c(32))
+
+### Building 0 ###
+### Model Training ###
+# Latitud #
+rfor.lat.0 <- train(build.0.LATITUDE ~ ., sample.build.0.lat, method = "rf", tuneGrid= tunegridRF, trControl = trctrlRF, preProcess = preProcessRF)
+
+# Longitud #
+rfor.long.0 <- train(build.0.LONGITUDE ~ ., sample.build.0.long, method = "rf", tuneGrid= tunegridRF, trControl = trctrlRF, preProcess = preProcessRF)
+
+# Floor #
+rfor.floor.0 <- train(build.0.FLOOR ~ ., sample.build.0.floor, method = "rf", tuneGrid= tunegridRF, trControl = trctrlRF, preProcess = preProcessRF)
+
+### Prediction ###
+# Latitud #
+pred.rfor.lat.0 <- predict(rfor.lat.0, build.0.lat.v)
+
+# Longitud #
+pred.rfor.long.0 <- predict(rfor.long.0, build.0.long.v)
+
+# Floor #
+pred.rfor.floor.0 <- predict(rfor.floor.0, build.0.floor.v)
+
+### Post Resample ###
+# Latitud #
+PRRFb0lat0 <- postResample(pred.rfor.lat.0, build.0.lat.v$build.0.v.LATITUDE)
+PRRFb0lat0
+
+# Longitud #
+PRRFb0lon0 <- postResample(pred.rfor.long.0, build.0.long.v$build.0.v.LONGITUDE)
+PRRFb0lon0
+
+### Accuracy ###
+#Floor
+conf.matrix.rfor.floor.0 <- table(pred.rfor.floor.0, build.0.floor.v$build.0.v.FLOOR)
+accuracy.rfor.floor.0 <- (sum(diag(conf.matrix.rfor.floor.0))) / sum(conf.matrix.rfor.floor.0)
+accuracy.rfor.floor.0 <- accuracy.rfor.floor.0 * 100
+accuracy.rfor.floor.0
+```
+
+### Building 1
+
+```{r}
+### Building 1 ###
+### Model Training ###
+# Latitud #
+rfor.lat.1 <- train(build.1.LATITUDE ~ ., sample.build.1.lat, method = "rf", tuneGrid= tunegridRF, trControl = trctrlRF, preProcess = preProcessRF)
+
+# Longitud #
+rfor.long.1 <- train(build.1.LONGITUDE ~ ., sample.build.1.long, method = "rf", tuneGrid= tunegridRF, trControl = trctrlRF, preProcess = preProcessRF)
+
+# Floor #
+rfor.floor.1 <- train(build.1.FLOOR ~ ., sample.build.1.floor, method = "rf", tuneGrid= tunegridRF, trControl = trctrlRF, preProcess = preProcessRF)
+
+### Prediction ###
+# Latitud #
+pred.rfor.lat.1 <- predict(rfor.lat.1, build.1.lat.v)
+
+# Longitud #
+pred.rfor.long.1 <- predict(rfor.long.1, build.1.long.v)
+
+# Floor #
+pred.rfor.floor.1 <- predict(rfor.floor.1, build.1.floor.v)
+
+### Post Resample ###
+# Latitud #
+PRRFb0lat1 <- postResample(pred.rfor.lat.1, build.1.lat.v$build.1.v.LATITUDE)
+PRRFb0lat1
+
+# Longitud #
+PRRFb0lon1 <- postResample(pred.rfor.long.1, build.1.long.v$build.1.v.LONGITUDE)
+PRRFb0lon1
+
+### Accuracy ###
+#Floor
+conf.matrix.rfor.floor.1 <- table(pred.rfor.floor.1, build.1.floor.v$build.1.v.FLOOR)
+accuracy.rfor.floor.1 <- (sum(diag(conf.matrix.rfor.floor.1))) / sum(conf.matrix.rfor.floor.1)
+accuracy.rfor.floor.1 <- accuracy.rfor.floor.1 * 100
+accuracy.rfor.floor.1
+```
+
+### Building 2
+
+```{r}
+### Building 2 ###
+### Model Training ###
+# Latitud #
+rfor.lat.2 <- train(build.2.LATITUDE ~ ., sample.build.2.lat, method = "rf", tuneGrid= tunegridRF, trControl = trctrlRF, preProcess = preProcessRF)
+
+# Longitud #
+rfor.long.2 <- train(build.2.LONGITUDE ~ ., sample.build.2.long, method = "rf", tuneGrid= tunegridRF, trControl = trctrlRF, preProcess = preProcessRF)
+
+# Floor #
+rfor.floor.2 <- train(build.2.FLOOR ~ ., sample.build.2.floor, method = "rf", tuneGrid= tunegridRF, trControl = trctrlRF, preProcess = preProcessRF)
+
+### Prediction ###
+# Latitud #
+pred.rfor.lat.2 <- predict(rfor.lat.2, build.2.lat.v)
+
+# Longitud #
+pred.rfor.long.2 <- predict(rfor.long.2, build.2.long.v)
+
+# Floor #
+pred.rfor.floor.2 <- predict(rfor.floor.2, build.2.floor.v)
+
+### Post Resample ###
+# Latitud #
+PRRFb0lat2 <- postResample(pred.rfor.lat.2, build.2.lat.v$build.2.v.LATITUDE)
+PRRFb0lat2
+
+# Longitud #
+PRRFb0lon2 <- postResample(pred.rfor.long.2, build.2.long.v$build.2.v.LONGITUDE)
+PRRFb0lon2
+
+### Accuracy ###
+#Floor
+conf.matrix.rfor.floor.2 <- table(pred.rfor.floor.2, build.2.floor.v$build.2.v.FLOOR)
+accuracy.rfor.floor.2 <- (sum(diag(conf.matrix.rfor.floor.2))) / sum(conf.matrix.rfor.floor.2)
+accuracy.rfor.floor.2 <- accuracy.rfor.floor.2 * 100
+accuracy.rfor.floor.2
+
+```
+
+### Save Random Forest Model
+
+```{r}
+# Building 0
+saverfor.lat.0 <- saveRDS(rfor.lat.0, 'modelrfor.lat.0.rds')
+saverfor.long.0 <- saveRDS(rfor.long.0, 'modelrfor.long.0.rds')
+saverfor.floor.0 <- saveRDS(rfor.floor.0, 'modelrfor.floor.0.rds')
+
+# Building 1
+saverfor.lat.1 <- saveRDS(rfor.lat.1, 'modelrfor.lat.1.rds')
+saverfor.long.1 <- saveRDS(rfor.long.1, 'modelrfor.long.1.rds')
+saverfor.floor.1 <- saveRDS(rfor.floor.1, 'modelrfor.floor.1.rds')
+
+# Building 2
+saverfor.lat.2 <- saveRDS(rfor.lat.2, 'modelrfor.lat.2.rds')
+saverfor.long.2 <- saveRDS(rfor.long.2, 'modelrfor.long.2.rds')
+saverfor.floor.2 <- saveRDS(rfor.floor.2, 'modelrfor.floor.2.rds')
+```
+
+
+### Confusion Matrix for Floor Accuracy
+
+```{r}
+#KNN
+#Build 0
+conf.matrix.knn.floor.0
+
+#Build 1
+conf.matrix.knn.floor.1
+
+#Build 2
+conf.matrix.knn.floor.2
+
+# Random Forest
+#Build 0
+conf.matrix.rfor.floor.0
+
+#Build 1
+conf.matrix.rfor.floor.1
+
+#Build 2
+conf.matrix.rfor.floor.2
+
+```
+## Xtreme Gradient Boosting Tree
+### Building 0
+
+```{r}
+# Train Control
+trctrlGB <- trainControl(method = "cv", number = 5, verboseIter = TRUE)
+preProcessGB <- c("zv", "medianImpute")
+
+### Building 0 ###
+### Model Training ###
+# Latitud #
+GB.lat.0 <- train(build.0.LATITUDE ~ ., sample.build.0.lat, method = "xgbTree", trControl = trctrlGB, preProcess = preProcessRF)
+
+# Longitud #
+GB.long.0 <- train(build.0.LONGITUDE ~ ., sample.build.0.long, method = "xgbTree", trControl = trctrlGB, preProcess = preProcessRF)
+
+# Floor #
+GB.floor.0 <- train(build.0.FLOOR ~ ., sample.build.0.floor, method = "xgbTree", trControl = trctrlGB, preProcess = preProcessRF)
+
+### Prediction ###
+# Latitud #
+pred.GB.lat.0 <- predict(GB.lat.0, build.0.lat.v)
+
+# Longitud #
+pred.GB.long.0 <- predict(GB.long.0, build.0.long.v)
+
+# Floor #
+pred.GB.floor.0 <- predict(GB.floor.0, build.0.floor.v)
+
+### Post Resample ###
+# Latitud #
+GBb0lat0 <- postResample(pred.GB.lat.0, build.0.lat.v$build.0.v.LATITUDE)
+GBb0lat0
+
+# Longitud #
+GBb0lon0 <- postResample(pred.GB.long.0, build.0.long.v$build.0.v.LONGITUDE)
+GBb0lon0
+
+### Accuracy ###
+#Floor
+conf.matrix.GB.floor.0 <- table(pred.GB.floor.0, build.0.floor.v$build.0.v.FLOOR)
+accuracy.GB.floor.0 <- (sum(diag(conf.matrix.GB.floor.0))) / sum(conf.matrix.GB.floor.0)
+accuracy.GB.floor.0 <- accuracy.GB.floor.0 * 100
+accuracy.GB.floor.0
+```
+
+### Building 1
+
+```{r}
+### Building 1 ###
+### Model Training ###
+# Latitud #
+GB.lat.1 <- train(build.1.LATITUDE ~ ., sample.build.1.lat, method = "xgbTree", trControl = trctrlGB, preProcess = preProcessRF)
+
+# Longitud #
+GB.long.1 <- train(build.1.LONGITUDE ~ ., sample.build.1.long, method = "xgbTree", trControl = trctrlGB, preProcess = preProcessRF)
+
+# Floor #
+GB.floor.1 <- train(build.1.FLOOR ~ ., sample.build.1.floor, method = "xgbTree", trControl = trctrlGB, preProcess = preProcessRF)
+
+### Prediction ###
+# Latitud #
+pred.GB.lat.1 <- predict(GB.lat.1, build.1.lat.v)
+
+# Longitud #
+pred.GB.long.1 <- predict(GB.long.1, build.1.long.v)
+
+# Floor #
+pred.GB.floor.1 <- predict(GB.floor.1, build.1.floor.v)
+
+### Post Resample ###
+# Latitud #
+GBb0lat1 <- postResample(pred.GB.lat.1, build.1.lat.v$build.1.v.LATITUDE)
+GBb0lat1
+
+# Longitud #
+GBb0lon1 <- postResample(pred.GB.long.1, build.1.long.v$build.1.v.LONGITUDE)
+GBb0lon1
+
+### Accuracy ###
+#Floor
+conf.matrix.GB.floor.1 <- table(pred.GB.floor.1, build.1.floor.v$build.1.v.FLOOR)
+accuracy.GB.floor.1 <- (sum(diag(conf.matrix.GB.floor.1))) / sum(conf.matrix.GB.floor.1)
+accuracy.GB.floor.1 <- accuracy.GB.floor.1 * 100
+accuracy.GB.floor.1
+```
+
+### Building 2
+
+```{r}
+### Building 2 ###
+### Model Training ###
+# Latitud #
+GB.lat.2 <- train(build.2.LATITUDE ~ ., sample.build.2.lat, method = "xgbTree", trControl = trctrlGB, preProcess = preProcessRF)
+
+# Longitud #
+GB.long.2 <- train(build.2.LONGITUDE ~ ., sample.build.2.long, method = "xgbTree", trControl = trctrlGB, preProcess = preProcessRF)
+
+# Floor #
+GB.floor.2 <- train(build.2.FLOOR ~ ., sample.build.2.floor, method = "xgbTree", trControl = trctrlGB, preProcess = preProcessRF)
+
+### Prediction ###
+# Latitud #
+pred.GB.lat.2 <- predict(GB.lat.2, build.2.lat.v)
+
+# Longitud #
+pred.GB.long.2 <- predict(GB.long.2, build.2.long.v)
+
+# Floor #
+pred.GB.floor.2 <- predict(GB.floor.2, build.2.floor.v)
+
+### Post Resample ###
+# Latitud #
+GBb0lat2 <- postResample(pred.GB.lat.2, build.2.lat.v$build.2.v.LATITUDE)
+GBb0lat2
+
+# Longitud #
+GBb0lon2 <- postResample(pred.GB.long.2, build.2.long.v$build.2.v.LONGITUDE)
+GBb0lon2
+
+### Accuracy ###
+#Floor
+conf.matrix.GB.floor.2 <- table(pred.GB.floor.2, build.2.floor.v$build.2.v.FLOOR)
+accuracy.GB.floor.2 <- (sum(diag(conf.matrix.GB.floor.2))) / sum(conf.matrix.GB.floor.2)
+accuracy.GB.floor.2 <- accuracy.GB.floor.2 * 100
+accuracy.GB.floor.2
+```
+### save XGB Models
+
+```{r}
+# Building 0
+saveGB.lat.0 <- saveRDS(GB.lat.0, 'modelGB.lat.0.rds')
+saveGB.long.0 <- saveRDS(GB.long.0, 'modelGB.long.0.rds')
+saveGB.floor.0 <- saveRDS(GB.floor.0, 'modelGB.floor.0.rds')
+
+# Building 1
+saveGB.lat.1 <- saveRDS(GB.lat.1, 'modelGB.lat.1.rds')
+saveGB.long.1 <- saveRDS(GB.long.1, 'modelGB.long.1.rds')
+saveGB.floor.1 <- saveRDS(GB.floor.1, 'modelGB.floor.1.rds')
+
+# Building 2
+saveGB.lat.2 <- saveRDS(GB.lat.2, 'modelGB.lat.2.rds')
+saveGB.long.2 <- saveRDS(GB.long.2, 'modelGB.long.2.rds')
+saveGB.floor.2 <- saveRDS(GB.floor.2, 'modelGB.floor.2.rds')
+```
+
+# Fit the Final Model
+## Random Forest Model
+
+```{r}
+# Based on the previous results, the Random Forest Model is the most accurate model.
+# Create Data Frame
+lat <- data.frame(training$LATITUDE, training[,1:520])
+long <- data.frame(training$LONGITUDE, training[,1:520])
+floor <- data.frame(training$FLOOR, training[,1:520])
+
+floor$training.FLOOR <- as.factor(floor$training.FLOOR)
+
+lat.v <- data.frame(validation$LATITUDE, validation[,1:520])
+long.v <- data.frame(validation$LONGITUDE, validation[,1:520])
+floor.v <- data.frame(validation$FLOOR, validation[,1:520])
+
+### Model Training ### 
+# Train Control
+trctrlRF <- trainControl(method = "cv", number = 5, verboseIter = TRUE)
+preProcessRF <- c("zv", "medianImpute")
+tunegridRF <- expand.grid(mtry=c(32))
+
+# Latitud #
+latitudeRF <- train(training.LATITUDE ~ ., lat, method = "rf", tuneGrid= tunegridRF, trControl = trctrlRF, preProcess = preProcessRF)
+
+# Longitud #
+longtitudeRF <- train(training.LONGITUDE ~ ., long, method = "rf", tuneGrid= tunegridRF, trControl = trctrlRF, preProcess = preProcessRF)
+
+# Floor #
+floorRF <- train(training.FLOOR ~ ., floor, method = "rf", tuneGrid= tunegridRF, trControl = trctrlRF, preProcess = preProcessRF)
+
+### Prediction ###
+# Latitud #
+predictionlatRF <- predict(latitudeRF, lat.v)
+
+# Longitud #
+predictionlongRF <- predict(longtitudeRF, long.v)
+
+# Floor #
+predictionfloorRF <- predict(floorRF, floor.v)
+
+### Post Resample ###
+# Latitud #
+postrsamplelatRF <- postResample(predictionlatRF, lat.v$validation.LATITUDE)
+postrsamplelatRF
+
+# Longitud #
+postresamplelongRF <- postResample(predictionlongRF, long.v$validation.LONGITUDE)
+postresamplelongRF
+
+### Accuracy ###
+#Floor
+conf.matrix.rfor.floor <- table(predictionfloorRF, floor.v$validation.FLOOR)
+accuracy.rfor.floor <- (sum(diag(conf.matrix.rfor.floor))) / sum(conf.matrix.rfor.floor)
+accuracy.rfor.floor <- accuracy.rfor.floor * 100
+accuracy.rfor.floor
+conf.matrix.rfor.floor
+```
+
+## Relative Position Identification
+
+```{r}
+# RELATIVEPOSITION range: 1 - Inside, 2 - Outside in Front of the door
+
+summary(build.0$RELATIVEPOSITION)
+summary(build.1$RELATIVEPOSITION)
+summary(build.2$RELATIVEPOSITION)
+```
+
+### Save Final Model
+
+```{r}
+# Final Model
+save.latitudeRF <- saveRDS(latitudeRF, 'model.latitudeRF.rds')
+saver.longtitudeRF <- saveRDS(longtitudeRF, 'model.longtitudeRF.rds')
+saver.floorRF <- saveRDS(floorRF, 'model.floorRF.rds')
+```
+
+# Results Discussion 
+
+The goal of this project was accomplished, the feasibility to determine / predict the location of a user based on WAPs signals, was successfully achieved.  
+The predictions of the models are very accurate and quite representative. However, we have to take into account that we combined both datasets (Training and Validation) to create the models, since the training data had a lack of representativity. Hence, it is difficult to gauge if our model can have a problem of overfitting.
+This model it’s an accurate and inexpensive way to determine an user location in indoor spaces, several use cases can be developed to take advantage of the model.
+
+# Recomendations
+
+Use the model RF to conduct the predictions since the R-squared values were the highest one and RMSE was the lowest one.
