@@ -1,5 +1,12 @@
 # XTOL - Big Data and Data Analytics Program
-Repository content
+## Table of Contents
+<ul>
+<li><a href="#Module 1">Module 1 - Understanding Customers and Predicting Profitability</a></li>
+<li><a href="#Module 2">Module 2 - Predicting Customer Preferences</a></li>  
+<li><a href="#Module 3">Module 3 - Deep Analytics and Visualization</a></li>
+<li><a href="#Module 4">Module 4 - Data Science & Big Data</a></li>
+<li><a href="#Module 5">Module 5 - Data Science with Python</a></li>
+</ul>
 
 # Reference Material
 ><ol>
