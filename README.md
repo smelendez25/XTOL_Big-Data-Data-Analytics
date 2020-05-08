@@ -2,8 +2,10 @@
 Repository content
 
 # Reference Material
-> 1- https://www.schankacademy.com/data-analytics-big-data
-> 2- https://cenfotec.courses.dataanalyticsacademy.com/mc/program?productID=5545
+><ol>
+>    <li><p>https://www.schankacademy.com/data-analytics-big-data</p></li>
+>    <li><p>https://cenfotec.courses.dataanalyticsacademy.com/mc/program?productID=5545</p></li>
+></ol>
 
 # Module 1 - Understanding Customers and Predicting Profitability
 Task 1 - Investigate Customer Buying Patterns
