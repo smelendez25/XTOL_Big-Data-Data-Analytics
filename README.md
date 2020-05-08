@@ -8,9 +8,11 @@ Repository content
 ></ol>
 
 # Module 1 - Understanding Customers and Predicting Profitability
+><ol>
 Task 1 - Investigate Customer Buying Patterns
 Task 2 - Predicting Profitability
 Task 3 - Present Data Mining Activities to CEO and Report on Lessons Learned
+></ol>
 
 # Module 2 - Predicting Customer Preferences
 Task 1 - Get Started with R
