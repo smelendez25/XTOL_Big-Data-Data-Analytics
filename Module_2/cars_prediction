@@ -1,0 +1,29 @@
+library(readr)
+carros <- read.csv("cars.csv")
+View(carros)
+attributes(carros)
+summary(carros)
+str(carros)
+names(carros)
+plot(carros)
+hist(carros$speed.of.car)
+plot(carros$speed.of.car, carros$distance.of.car)
+qqnorm(carros$speed.of.car)
+qqnorm(carros$distance.of.car)
+carros$speed.of.car<- as.numeric(carros$speed.of.car)
+names(carros)<- c("model", "speed", "distance")
+set.seed(029)
+trainSize <- round(nrow(carros)*0.8)
+trainSize
+testSize <- nrow(carros)-trainSize
+testSize
+training_indices<-sample(seq_len(nrow(carros)),size =trainSize)
+trainSet <- carros[training_indices,]
+testSet <- carros[-training_indices,]
+Modelolineal<- lm(distance~speed, trainSet)
+summary(Modelolineal)
+prediction<-predict(Modelolineal,testSet)
+prediction
+plot(prediction)
+hist(prediction)
+plot(Modelolineal)

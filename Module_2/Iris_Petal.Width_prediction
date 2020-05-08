@@ -1,0 +1,35 @@
+library(readr)
+IrisDataset<- read.csv("iris.csv")
+View(IrisDataset)
+attributes(IrisDataset)
+summary(IrisDataset)
+str(IrisDataset)
+names(IrisDataset)
+hist(IrisDataset$Sepal.Length)
+plot(IrisDataset$Sepal.Length, IrisDataset$Sepal.Width)
+qqnorm(IrisDataset$Sepal.Lengt)
+plot(IrisDataset)
+IrisDataset$Species<- as.numeric(IrisDataset$Species)
+set.seed(1234)
+trainSize <- round(nrow(IrisDataset)*0.8)
+trainSize
+testSize <- nrow(IrisDataset)-trainSize
+testSize
+training_indices<-sample(seq_len(nrow(IrisDataset)),size =trainSize)
+trainSet <- IrisDataset[training_indices,]
+testSet <- IrisDataset[-training_indices,]
+LinearModel<- lm(Petal.Width~Petal.Length, trainSet)
+summary(LinearModel)
+prediction<-predict(LinearModel,testSet)
+prediction
+plot(prediction)
+hist(prediction)
+plot(LinearModel)
+
+
+
+prediction2<-predict(LinearModel,testSet, interval= '0.95')
+prediction2
+
+prediction2<-predict(LinearModel,testSet, interval= 'prediction')
+prediction2
