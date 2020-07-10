@@ -1,0 +1,903 @@
+---
+title: "M4T3 - Develop Models - Galaxy"
+output: 
+  html_notebook: 
+    number_sections: yes
+    theme: journal
+---
+
+# Project Summary 
+We will develop several models and pick the best model using Small matrix dataset which are manually labeled with a sentiment rating for Galaxy.
+We will then use the best model to predict sentiment ratings of the large matrix dataset for Galaxy.
+
+# Enviroment Setup
+This section contains the enviroment setup and data import steps.
+
+```{r}
+setwd("~/XTOL Big Data/Module 4/Task 3 - Develop Models/Samsung Analysis")
+
+################
+# Load packages
+################
+library(caret)
+library(corrplot)
+library(readr)
+library(e1071)
+library(C50)
+library(kknn)
+library(gbm)
+library(dplyr)
+
+#####################
+# Parallel processing
+#####################
+
+library(doParallel) 
+
+# Check number of cores and workers available 
+detectCores()
+cl <- makeCluster(4)
+registerDoParallel(cl)
+getDoParWorkers()
+
+```
+
+## Import Data
+
+```{r}
+###############
+# Import data
+##############
+
+## Load training and test set
+galaxy_smallmatrix<- read.csv("~/XTOL Big Data/Module 4/Task 3 - Develop Models/galaxy_smallmatrix_labeled_9d.csv", stringsAsFactors = FALSE, header=T)
+galaxy_largematrix<- read.csv("~/XTOL Big Data/Module 4/Task 3 - Develop Models/galaxyLargeMatrix.csv", stringsAsFactors = FALSE, header=T)
+
+################
+# Evaluate data
+################
+
+#--- Training Set ---#
+summary(galaxy_smallmatrix) 
+str(galaxy_smallmatrix) 
+head(galaxy_smallmatrix)
+tail(galaxy_smallmatrix)
+table(galaxy_smallmatrix$galaxysentiment)
+
+# check for missing values 
+is.na(galaxy_smallmatrix)
+any(is.na(galaxy_smallmatrix))
+
+# plot
+hist(galaxy_smallmatrix$galaxysentiment)
+qqnorm(galaxy_smallmatrix$galaxysentiment)  
+
+#--- Prediction Set ---# 
+summary(galaxy_largematrix) 
+str(galaxy_largematrix) 
+head(galaxy_largematrix)
+tail(galaxy_largematrix)
+
+# check for missing values 
+is.na(galaxy_largematrix)
+any(is.na(galaxy_largematrix))
+
+```
+
+# Pre-processing
+
+```{r}
+#############
+# Preprocess
+#############
+
+#--- Training and test set ---#
+
+# change variable types
+galaxy_smallmatrix$galaxysentiment <- as.factor(galaxy_smallmatrix$galaxysentiment)
+# normalize
+preprocessParamsg <- preProcess(galaxy_smallmatrix[,1:58], method = c("center", "scale"))
+print(preprocessParamsg)
+galaxy_smallmatrix_N <- predict(preprocessParamsg, galaxy_smallmatrix)
+str(galaxy_smallmatrix_N)
+
+#--- Prediction set ---#
+
+# drop ID variable
+galaxy_largematrix$id<- NULL
+# Add a variable
+galaxy_largematrix$galaxysentiment <- as.factor(galaxy_largematrix$galaxysentiment)
+# normalize
+galaxy_largematrix_N <- predict(preprocessParamsg, galaxy_largematrix)
+str(galaxy_largematrix_N)
+
+##################
+# Train/test sets
+##################
+
+# set random seed
+set.seed(123)
+# create the training partition that is 70% of total obs
+inTrainingg <- createDataPartition(galaxy_smallmatrix_N$galaxysentiment, p=0.7, list=FALSE)
+# create training/testing dataset
+gtrainSetN <- galaxy_smallmatrix_N[inTrainingg,]   
+gtestSetN <- galaxy_smallmatrix_N[-inTrainingg,]   
+
+# verify number of obs 
+nrow(gtrainSetN)
+nrow(gtestSetN)
+
+################
+# Train control
+################
+
+# set 5 fold cross validation
+fitControl <- trainControl(method = "cv", number = 5)
+
+```
+# Train Models
+
+Five algorithms will be tested to determine the best fit in terms of Kappa and accuracy.
+
+## Decision Tree C5.0 Model
+
+```{r}
+## ------- Decision Tree C5.0 ------- ##
+# set random seed
+set.seed(123)
+# train/fit
+C5.0_Fitg <- train(galaxysentiment~., data=gtrainSetN, method="C5.0", trControl=fitControl, metric = "Kappa", tuneLength=5)
+C5.0_Fitg
+
+### Save model ###
+
+saveRDS(C5.0_Fitg, "C5.0_Fitg.rds")
+C5.0_Fitg <- readRDS("C5.0_Fitg.rds")
+
+### C5.0 Prediction ###
+
+# predict with C5.0
+C5.0_Predg <- predict(C5.0_Fitg, gtestSetN)
+C5.0_Predg 
+
+#summarize predictions
+summary(C5.0_Predg)
+
+# performance measurement
+postResample(C5.0_Predg, gtestSetN$galaxysentiment)
+
+# plot
+plot(C5.0_Predg,gtestSetN$galaxysentiment)
+
+#calculate confusion Matrix
+options(max.print=10000)
+gcmC5.0 <-confusionMatrix(C5.0_Predg,gtestSetN$galaxysentiment, mode="everything")
+gcmC5.0 
+```
+
+## Random Forest Model
+
+```{r}
+## ------- random forest ------- ##
+
+# set random seed
+set.seed(123)
+# train/fit
+rf_Fitg <- train(galaxysentiment~., data=gtrainSetN, method="rf", trControl=fitControl, metric = "Kappa",tuneLength=5) 
+rf_Fitg
+
+# Save the Model #
+saveRDS(rf_Fitg, "rf_Fitg.rds")  
+# load and name model
+rf_Fitg <- readRDS("rf_Fitg.rds")
+
+#---Predict testSet with  rf---#
+# predict with rf
+rf_Predg <- predict(rf_Fitg, gtestSetN)
+rf_Predg 
+
+#summarize predictions
+summary(rf_Predg)
+
+# performance measurement
+postResample(rf_Predg, gtestSetN$galaxysentiment)
+
+# plot
+plot(rf_Predg,gtestSetN$galaxysentiment)
+
+#calculate confusion Matrix
+cmrfg <-confusionMatrix(rf_Predg,gtestSetN$galaxysentiment, mode="everything")
+cmrfg
+
+```
+
+## SVM Model
+
+```{r}
+## ------- SVM ------- ##
+
+# set random seed
+set.seed(123)
+# SVM train/fit
+svm_Fitg <- train(galaxysentiment~., data=gtrainSetN, method="svmLinear", trControl=fitControl, metric = "Kappa",tuneLength=5) 
+svm_Fitg
+
+# Save SVM Model #
+saveRDS(svm_Fitg, "svmFitg.rds")  
+
+# load and name model
+svm_Fitg<- readRDS("svmFitg.rds")
+
+#---Predict testSet with  svm---#
+# predict with svm
+svm_Predg <- predict(svm_Fitg, gtestSetN)
+svm_Predg 
+
+#summarize predictions
+summary(svm_Predg)
+
+# performance measurement
+postResample(svm_Predg, gtestSetN$galaxysentiment)
+
+# plot
+plot(svm_Predg,gtestSetN$galaxysentiment)
+
+#calculate confusion Matrix
+cmsvm <-confusionMatrix(rf_Predg,gtestSetN$galaxysentiment, mode="everything")
+cmsvm
+
+```
+
+## KKNN Model
+
+```{r}
+## ------- KKNN------- ##
+
+# set random seed
+set.seed(123)
+
+# KKNN train/fit
+kknn_Fitg <- train(galaxysentiment~., data=gtrainSetN, method="kknn", trControl=fitControl, metric = "Kappa",tuneLength=5) 
+kknn_Fitg
+
+# Save the Model #
+saveRDS(kknn_Fitg, "kknnFitg.rds")  
+
+# load and name model
+kknn_Fitg<- readRDS("kknnFitg.rds")
+
+#---Predict testSet with kknn---#
+
+# predict with kknn
+kknnPredg <- predict(kknn_Fitg, gtestSetN)
+# print predictions
+kknnPredg
+
+#summarize predictions
+summary(kknnPredg)
+
+#performance measurement
+postResample(kknnPredg, gtestSetN$galaxysentiment)
+
+# plot
+plot(kknnPredg,gtestSetN$galaxysentiment)
+
+#calculate confusion Matrix
+cmkknng <-confusionMatrix(kknnPredg, gtestSetN$galaxysentiment)
+cmkknng
+```
+
+## GBM Model
+
+```{r}
+## ------- GBM------- ##
+
+#recode variable of training set
+gtrainSetNG <-gtrainSetN
+gtrainSetNG$galaxysentiment <- recode(gtrainSetN$galaxysentiment, '0' = 'seg0', '1' = 'seg1', '2' = 'seg2', '3' = 'seg3', '4' = 'seg4', '5' = 'seg5')
+str(gtrainSetNG)
+
+#recode variable of test set
+gtestSetNG <-gtestSetN
+gtestSetNG$galaxysentiment <- recode(gtestSetNG$galaxysentiment, '0' = 'seg0', '1' = 'seg1', '2' = 'seg2', '3' = 'seg3', '4' = 'seg4', '5' = 'seg5')
+str(gtestSetNG)
+
+# set random seed
+set.seed(123)
+# GBM train/fit
+gmodel3<- train(galaxysentiment~., data=gtrainSetNG,method='gbm',trControl = fitControl,verbose=F,tuneLength=3)
+gmodel3
+
+# Save the Model #
+
+saveRDS(gmodel3, "gbmFit3g.rds")  
+
+# load and name model
+gbm_Fit3g<- readRDS("gbmFit3g.rds")
+
+#---Predict testSet---#
+
+# predict with gbm
+gbmPred1g <- predict(gbm_Fit3g, gtestSetNG)
+
+# print predictions
+gbmPred1g
+
+# summarize predictions
+summary(gbmPred1g)
+
+# performance measurement
+postResample(gbmPred1g, gtestSetNG$galaxysentiment)
+
+# plot
+plot(gbmPred1g,gtestSetN$galaxysentiment)
+
+#calculate confusion Matrix
+cmgbmg <-confusionMatrix(gbmPred1g, gtestSetNG$galaxysentiment, mode="everything")
+cmgbmg
+
+```
+
+# Metrics Comparison
+
+Find the best combination of data set and algorithm as measured by resulting performance metrics
+
+```{r}
+ModelFitResultsg <- resamples(list(C5.0=C5.0_Fitg,rf=rf_Fitg,SVM=svm_Fitg,kknn=kknn_Fitg,gbm=gbm_Fit3g))
+# output summary metrics for tuned models 
+summary(ModelFitResultsg)
+```
+
+# Feature Selection
+You will then model with each of these new data sets to determine which method, if any, provides the best model accuracy for this project.
+
+## Method 1 - Correlation
+
+```{r}
+#####################################
+# RF Model - Method 1 - Correlation #
+#####################################
+
+options(max.print=1000000)
+galaxyCOR <- galaxy_smallmatrix_N
+corrAll <- cor(galaxyCOR[,1:58])
+corrAll 
+
+# plot correlation matrix
+corrplot(corrAll, order = "hclust")
+corrplot(corrAll, method = "circle")
+gcorr58<- cor(galaxyCOR[,1:58])
+
+# create object with indexes of highly corr features
+gcorrIVhigh <- findCorrelation(gcorr58, cutoff=0.8)
+
+# print indexes of highly correlated attributes
+gcorrIVhigh
+
+# get var name of high corr IV
+colnames(galaxyCOR[c(29)])
+colnames(galaxyCOR[c(44)])
+colnames(galaxyCOR[c(24)]) 
+colnames(galaxyCOR[c(32)])
+colnames(galaxyCOR[c(56)]) 
+colnames(galaxyCOR[c(54)]) 
+colnames(galaxyCOR[c(34)]) 
+colnames(galaxyCOR[c(19)])
+colnames(galaxyCOR[c(42)]) 
+colnames(galaxyCOR[c(21)]) 
+colnames(galaxyCOR[c(31)])
+colnames(galaxyCOR[c(26)]) 
+colnames(galaxyCOR[c(51)])
+colnames(galaxyCOR[c(11)]) 
+colnames(galaxyCOR[c(36)]) 
+colnames(galaxyCOR[c(46)]) 
+colnames(galaxyCOR[c(16)]) 
+colnames(galaxyCOR[c(28)]) 
+colnames(galaxyCOR[c(23)]) 
+colnames(galaxyCOR[c(40)])
+colnames(galaxyCOR[c(57)])
+colnames(galaxyCOR[c(55)])
+colnames(galaxyCOR[c(30)])
+colnames(galaxyCOR[c(6)]) 
+colnames(galaxyCOR[c(5)]) 
+
+#################
+# Feature removal
+#################
+
+# remove based on Feature Engineering (FE)
+# create 34v ds
+galaxyCOR34v<- galaxyCOR
+galaxyCOR34v$samsungdisneg <- NULL
+galaxyCOR34v$samsungperneg<- NULL
+galaxyCOR34v$samsungdispos <- NULL
+galaxyCOR34v$htcdisneg<- NULL
+galaxyCOR34v$googleperneg<- NULL
+galaxyCOR34v$googleperpos <- NULL
+galaxyCOR34v$samsungdisunc <- NULL
+galaxyCOR34v$samsungcamunc <- NULL
+galaxyCOR34v$htcperpos <- NULL
+galaxyCOR34v$nokiacamunc <- NULL
+galaxyCOR34v$nokiadisneg <- NULL
+galaxyCOR34v$nokiadispos <- NULL
+galaxyCOR34v$nokiaperunc <- NULL
+galaxyCOR34v$nokiacampos <- NULL
+galaxyCOR34v$nokiadisunc <- NULL
+galaxyCOR34v$nokiaperneg <- NULL
+galaxyCOR34v$nokiacamneg <- NULL
+galaxyCOR34v$iphonedisneg <- NULL
+galaxyCOR34v$iphonedispos <- NULL
+galaxyCOR34v$sonyperpos <- NULL
+galaxyCOR34v$iosperunc <- NULL
+galaxyCOR34v$sonydisneg <- NULL
+galaxyCOR34v$iosperneg <- NULL
+galaxyCOR34v$ios <- NULL
+galaxyCOR34v$htcphone <- NULL
+str(galaxyCOR34v)    
+
+##################
+# Train/test sets
+##################
+# set random seed
+set.seed(123)
+
+# create the training partition 70% of total obs
+ginTrainingCOR <- createDataPartition(galaxyCOR34v$galaxysentiment, p=0.7, list=FALSE)
+
+# create training/testing dataset
+gtrainSetCOR <- galaxyCOR34v[ginTrainingCOR,]   
+gtestSetCOR <- galaxyCOR34v[-ginTrainingCOR,]   
+
+# verify number of obs 
+nrow(gtrainSetCOR)
+nrow(gtestSetCOR)
+
+################
+# Train control
+################
+
+# set 5 fold cross validation
+fitControl <- trainControl(method = "cv", number = 5, repeats = 5)
+
+# train/fit
+
+set.seed(123)
+rf_FitCORg <- train(galaxysentiment~., data=gtrainSetCOR, method="rf", trControl=fitControl, metric = "Kappa",tuneLength=5) 
+rf_FitCORg
+
+# Save the model
+saveRDS(rf_FitCORg, "rf_FitCORg.rds")  
+
+# load and name model
+rf_FitCORg <- readRDS("rf_FitCORg.rds")
+
+#################
+# Predict testSet
+#################
+
+# predict with rf
+rf_Pred2g <- predict(rf_FitCORg, gtestSetCOR)
+rf_Pred2g
+
+# summarize predictions
+summary(rf_Pred2g)
+
+# performance measurement
+postResample(rf_Pred2g, gtestSetCOR$galaxysentiment)
+ 
+
+# calculate confusion Matrix
+cmrfgcor <-confusionMatrix(rf_Pred2g,gtestSetCOR$galaxysentiment)
+```
+
+## Method 2 - Feature Variance
+
+```{r}
+##########################################
+# RF Model - Method 2 - Feature Variance #
+##########################################
+
+#nearZeroVar() with saveMetrics = TRUE returns an object containing a table including: frequency ratio, percentage unique, zero variance and near zero variance 
+
+gnzvMetrics <- nearZeroVar(galaxy_smallmatrix_N, saveMetrics = TRUE)
+gnzvMetrics
+
+
+# nearZeroVar() with saveMetrics = FALSE returns an vector 
+gnzv <- nearZeroVar(galaxy_smallmatrix_N, saveMetrics = FALSE) 
+gnzv
+
+# create a new data set and remove near zero variance features
+galaxyNZV <- galaxy_smallmatrix_N[,-gnzv]
+str(galaxyNZV)
+
+##################
+# Train/test sets
+##################
+# set random seed
+set.seed(123)
+
+# create the training partition 70 % of total obs
+ginTrainingNZV <- createDataPartition(galaxyNZV$galaxysentiment, p=0.7, list=FALSE)
+
+# create training/testing dataset
+gtrainSetNZV <- galaxyNZV[ginTrainingNZV,]   
+gtestSetNZV <- galaxyNZV[-ginTrainingNZV,]   
+
+# verify number of obs 
+nrow(gtrainSetNZV)
+nrow(gtestSetNZV)
+
+################
+# Train control
+################
+
+# set 5 fold cross validation
+fitControl <- trainControl(method = "cv", number = 5, repeats =5)
+
+# train/fit
+set.seed(123)
+grf_FitNZV <- train(galaxysentiment~., data=gtrainSetNZV, method="rf", trControl=fitControl, metric = "Kappa",tuneLength=5) 
+grf_FitNZV
+
+# Save the Model #
+saveRDS(grf_FitNZV, "grf_FitNZV.rds")  
+
+# load and name model
+grf_FitNZV<- readRDS("grf_FitNZV.rds")
+
+#################
+# Predict testSet
+#################
+# predict with rf
+rf_Pred3g <- predict(grf_FitNZV, gtestSetNZV)
+rf_Pred3g 
+# summarize predictions
+summary(rf_Pred3g)
+# performance measurement
+postResample(rf_Pred3g, gtestSetNZV$galaxysentiment)
+
+# calculate confusion Matrix
+cmrfgnzv <-confusionMatrix(rf_Pred3g,gtestSetNZV$galaxysentiment)
+```
+
+## Method 3 - Feature Elimination
+
+```{r}
+#############################################
+# RF Model - Method 3 - Feature Elimination #
+#############################################
+
+# Let's sample the data before using RFE
+set.seed(123)
+galaxySample <- galaxy_smallmatrix_N[sample(1:nrow(galaxy_smallmatrix_N), 1000, replace=FALSE),]
+
+# Set up rfeControl with randomforest, repeated cross validation and no updates
+ctrl <- rfeControl(functions = rfFuncs, 
+                   method = "cv",
+                   repeats = 5,
+                   verbose = FALSE)
+
+# Use rfe and omit the response variable (attribute 59 galaxysentiment) 
+rfeResultsg <- rfe(galaxySample[,1:58], 
+                  galaxySample$galaxysentiment, 
+                  sizes=(1:58), 
+                  rfeControl=ctrl)
+
+# Get results
+rfeResultsg
+
+# Save the Model
+saveRDS(rfeResultsg, "rfeResultsg.rds")  
+
+# load and name model
+rfeResultsg<- readRDS("rfeResultsg.rds")
+
+# Plot results
+plot(rfeResultsg, type=c("g", "o"))
+
+# create new data set with rfe recommended features
+galaxyRFE <- galaxy_smallmatrix_N[,predictors(rfeResultsg)]
+
+# add the dependent variable to iphoneRFE
+galaxyRFE$galaxysentiment <- galaxy_smallmatrix_N$galaxysentiment
+str(galaxyRFE)
+head(galaxy_smallmatrix_N)
+
+# review outcome
+str(galaxyRFE)
+summary(galaxyRFE)
+
+##################
+# Train/test sets
+##################
+
+# set random seed
+set.seed(123)
+
+# create the training partition 70 % of total obs
+ginTrainingRFE <- createDataPartition(galaxyRFE$galaxysentiment, p=0.7, list=FALSE)
+
+# create training/testing dataset
+gtrainSetRFE <- galaxyRFE[ginTrainingRFE,]   
+gtestSetRFE <- galaxyRFE[-ginTrainingRFE,]   
+
+# verify number of obs 
+nrow(gtrainSetRFE)
+nrow(gtestSetRFE)
+
+################
+# Train control
+################
+
+# set 5 fold cross validation
+fitControl <- trainControl(method = "cv", number = 5)
+
+# train/fit
+set.seed(123)
+rf_FitRFEg <- train(galaxysentiment~., data=gtrainSetRFE, method="rf", trControl=fitControl, metric = "Kappa",tuneLength=5) 
+rf_FitRFEg
+
+# Save the model
+saveRDS(rf_FitRFEg, "rf_FitRFEg.rds")  
+
+# load and name model
+rf_FitRFEg <- readRDS("rf_FitRFEg.rds")
+
+#################
+# Predict testSet
+#################
+# predict with rf
+rf_Pred5g <- predict(rf_FitRFEg, gtestSetRFE)
+rf_Pred5g
+# summarize predictions
+summary(rf_Pred5g)
+# performance measurement
+postResample(rf_Pred5g, gtestSetRFE$galaxysentiment)
+# calculate confusion Matrix
+cmrfeg <-confusionMatrix(rf_Pred5g,gtestSetRFE$galaxysentiment)
+```
+
+# Feature Engineering
+
+Feature engineering is the art of working with the data so that it can more readily be consumed by machine learning algorithms. Feature engineering includes mutating existing attributes, combining attributes, deconstructing attributes and much more. 
+
+In this step we will consider two possibilities:
+
+A- Altering the dependant variable
+B- Principal Component Analysis 
+
+## Engineering the Dependant variable
+
+From the previous step you probably saw that several of the dependant variable's factor levels had very poor Sensitivity and Balanced Accuracy. Do we really need 6 levels to understand positive and negative sentiment? Perhaps combining some of these levels will help increase accuracy and kappa. What if we remapped the values as follows:
+
+1: negative
+2: somewhat negative
+3: somewhat positive
+4: positive
+
+```{r}
+############################################################
+# RF Model with RFE and Engineering the Dependant variable #
+############################################################
+# create a new dataset that will be used for recoding sentiment
+galaxyRC <- galaxyRFE
+# recode sentiment to combine factor levels 0 & 1 and 4 & 5
+galaxyRC$galaxysentiment <- recode(galaxyRFE$galaxysentiment, '0' = 1, '1' = 1, '2' = 2, '3' = 3, '4' = 4, '5' = 4) 
+# inspect results
+summary(galaxyRC)
+str(galaxyRC)
+# make iphonesentiment a factor
+galaxyRC$galaxysentiment <- as.factor(galaxyRC$galaxysentiment)
+
+##################
+# Train/test sets
+##################
+
+# set random seed
+set.seed(123)
+ginTrainingRC <- createDataPartition(galaxyRC$galaxysentiment, p=0.7, list=FALSE)
+# create training/testing dataset
+gtrainSetRC <- galaxyRC[ginTrainingRC,]   
+gtestSetRC <- galaxyRC[-ginTrainingRC,]   
+
+# verify number of obs 
+nrow(gtrainSetRC)
+nrow(gtestSetRC)
+
+################
+# Train control
+################
+
+# set 5 fold cross validation
+fitControl <- trainControl(method = "cv", number = 5)
+
+# train/fit
+
+set.seed(123)
+rf_FitRCg <- train(galaxysentiment~., data=gtrainSetRC, method="rf", trControl=fitControl, metric = "Kappa",tuneLength=5) 
+rf_FitRCg
+
+# Save the model
+saveRDS(rf_FitRCg, "rf_FitRCg.rds")  
+
+# load and name model
+rf_FitRCg <- readRDS("rf_FitRCg.rds")
+
+#################
+# Predict testSet
+#################
+# predict with rf
+rf_Pred6g <- predict(rf_FitRCg, gtestSetRC)
+rf_Pred6g
+# summarize predictions
+summary(rf_Pred6g)
+# performance measurement
+postResample(rf_Pred6g, gtestSetRC$galaxysentiment)
+# calculate confusion Matrix
+cmrcg <-confusionMatrix(rf_Pred6g, gtestSetRC$galaxysentiment, mode="everything")
+```
+
+## Principal Component Analysis 
+
+Principal Component Analysis (PCA) is a form of feature engineering that removes all of your features and replaces them with mathematical representations of their variance
+
+```{r}
+#####################################################################
+# Random Forest Model with PCA and Engineering the Dependent variable
+#####################################################################
+
+########### Train/test sets##############
+
+# set random seed
+set.seed(123)
+# create the training partition 70 % of total obs
+inTrainingggpca <- createDataPartition(galaxy_smallmatrix$galaxysentiment, p=0.7, list=FALSE)
+# create training/testing dataset
+gtraining <- galaxy_smallmatrix[inTrainingggpca,]   
+gtesting <- galaxy_smallmatrix[-inTrainingggpca,]   
+# verify number of obs 
+nrow(gtraining)
+nrow(gtesting)
+########### recode the Dependent variable##############
+gtraining$galaxysentiment <- recode(gtraining$galaxysentiment, '0' = 1, '1' = 1, '2' = 2, '3' = 3, '4' = 4, '5' = 4) 
+
+gtraining$galaxysentiment <- as.factor(gtraining$galaxysentiment)
+
+gtesting$galaxysentiment <- recode(gtesting$galaxysentiment, '0' = 1, '1' = 1, '2' = 2, '3' = 3, '4' = 4, '5' = 4) 
+
+gtesting$galaxysentiment <- as.factor(gtesting$galaxysentiment)
+
+str(gtraining)
+### normalize and PCA ####
+# data = training and testing from iphoneDF (no feature selection) 
+# create object containing centered, scaled PCA components from training set
+# excluded the dependent variable and set threshold to .95
+preprocessParamsgpca <- preProcess(gtraining[,-59], method=c("center", "scale", "pca"), thresh = 0.95)
+print(preprocessParamsgpca)
+
+# use predict to apply pca parameters, create training, exclude dependant
+gtrain.pca <- predict(preprocessParamsgpca, gtraining[,-59])
+
+# add the dependent to training
+gtrain.pca$galaxysentiment <- gtraining$galaxysentiment
+
+# use predict to apply pca parameters, create testing, exclude dependant
+gtest.pca <- predict(preprocessParamsgpca, gtesting[,-59])
+
+# add the dependent to training
+gtest.pca$galaxysentiment <- gtesting$galaxysentiment
+
+# inspect results
+str(gtrain.pca)
+str(gtest.pca)
+
+################
+# Train control
+################
+
+# set 5 fold cross validation
+fitControl <- trainControl(method = "cv", number = 5)
+
+# train/fit
+
+set.seed(123)
+rf_Fitpcag<- train(galaxysentiment~., data=gtrain.pca, method="rf", trControl=fitControl, metric = "Kappa",tuneLength=5) 
+rf_Fitpcag
+
+# Save the model
+saveRDS(rf_Fitpcag, "rf_Fitpcag.rds")  
+
+# load and name model
+rf_Fitpcag <- readRDS("rf_Fitpcag.rds")
+
+#################
+# Predict testSet
+#################
+# predict with rf
+rf_Pred7g <- predict(rf_Fitpcag, gtest.pca)
+rf_Pred7g
+
+# summarize predictions
+summary(rf_Pred7g)
+
+# performance measurement
+postResample(rf_Pred7g, gtest.pca$galaxysentiment)
+
+# calculate confusion Matrix
+options(max.print=10000)
+cmrf <-confusionMatrix(rf_Pred7g,gtest.pca$galaxysentiment, mode="everything")
+cmrf
+
+```
+# Sentiment Analysis in Large Data Matrix
+
+## Feature Engineering
+
+```{r}
+########################################
+# Feature Engineering with large matrix
+########################################
+
+# create new data set with rfe recommended features
+galaxylargematrixRFE <- galaxy_largematrix_N[,predictors(rfeResultsg)]
+
+# add the dependent variable to iphoneRFE
+galaxylargematrixRFE$galaxysentiment <- galaxy_largematrix_N$galaxysentiment
+str(galaxylargematrixRFE)
+```
+
+## Prediction
+
+```{r}
+####################
+# Predict new dataSet
+####################
+# predict with rf
+rf_Pred8g <- predict(rf_FitRCg, galaxylargematrixRFE)
+rf_Pred8g
+# summarize predictions
+summary(rf_Pred8g)
+
+###############
+# Save datasets
+###############
+galaxy_largematrixoutput <- galaxy_largematrix
+galaxy_largematrixoutput$galaxysentiment<- rf_Pred8g
+write.csv(galaxy_largematrixoutput, file = "galaxy_largematrixoutput.csv")
+```
+
+# Model Recomendation
+
+Based on the outcomes of this modeling process, the following configuration was the most suitable in terms of quality metrics (Kappa and Accuracy).
+
+Algorithm: Random Forest 
+Feature Selection: Recursive Feature Elimination
+Feature Engineering: Engineering the Dependant variable
+
+```{r}
+### Performance Metrics ###
+
+# Modeling Metrics
+ModelFitResultgalaxy <- resamples(list(C5.0=C5.0_Fitg,rf=rf_Fitg,SVM=svm_Fitg,kknn=kknn_Fitg,gbm=gbm_Fit3g))
+# output summary metrics for tuned models 
+summary(ModelFitResultgalaxy)
+
+# Feature Selection
+Featureselectiongalaxy <- resamples(list(Correlation=rf_FitCORg,NZV=grf_FitNZV,RFE=rf_FitRFEg))
+# output summary metrics for feature selection 
+summary(Featureselectiongalaxy)
+
+# Feature Engineering 
+Featureengineeringgalaxy <- resamples(list(DV=rf_FitRCg,PCA=rf_Fitpcag))
+# output summary metrics for feature engineering
+summary(Featureengineeringgalaxy)
+
+stopCluster(cl)
+
+```
+
+End of the document 
+
+------ SML --------
+
